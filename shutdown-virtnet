@@ -1,0 +1,10 @@
+#!/bin/bash
+
+export PATH=$PATH:/sbin:/usr/sbin
+
+# Tear down virtual bridge
+bridge link show bridgevirt | awk '{print $2}' | tr -d ':' | while read IFACE
+do
+    ip tuntap del dev $IFACE mode tap
+done
+ip link del bridgevirt type bridge

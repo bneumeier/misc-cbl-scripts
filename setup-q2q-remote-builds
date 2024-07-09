@@ -1,0 +1,80 @@
+#!/bin/bash
+#
+# Setup qemu-to-qemu builds for amd64->aarch64 and aarch64->amd64
+# The host-side builds will use the base image `lbl-complete.qcow2`. If
+# modifications are needed to the base image, use the respective run
+# scripts for the build system (which will put changes into lbl.qcow2)
+# and then make a new host-system lbl.qcow2 based on that one rather
+# than lbl-complete.qcow2.
+
+echo "Setting up basic q2q builds:"
+setup-q2q-builds
+
+echo "Tweaking to use remote Orange Pi:"
+cd $HOME/work/q2q
+
+# We don't want to have two builds running on the OPi at the same time!
+# For the aarch64 build:
+#   - The x86 host build takes about 45 minutes
+#   - The ARM target build takes about 909 minutes
+# For the arm64 build:
+#   - The ARM host build takes about 155 minutes
+#   - The x86 target build takes about 345 minutes
+# If we start both builds at the same time,
+# ARM host starts at T+0 and completes at T+155
+# ARM target starts at T+45 and completes at T+954
+# so there's an overlap from T+45 to T+155.
+# Let's not start the x86 host build until the ARM host is complete --
+# That way,
+# T+0: ARM host build starts
+# T+155: ARM host build completes; x86 target build starts, x86 host build starts
+# T+200: x86 host build completes; ARM target build starts
+# T+500: x86 target build completes
+# T+1109: ARM target build completes
+
+# We'll coordinate the two builds using a FIFO.
+
+mkfifo hang-on-there-little-buddy
+
+pushd amd64-*
+cat >> cbl-configuration.sh <<EOF
+export REMOTE_HOST_BUILD_LOCATION="cbl@lbopi-wl:/media/nvme/cbl/workspace/host"
+export REMOTE_HOST_QEMU_CHANGES="-e '/qemu-system/s@^@taskset -c 4-7 @' -e 's@-cpu cortex-a76@-accel kvm -cpu host@'"
+EOF
+sed -i -e '/export HOST_QEMU_CPU=/s@=.*@="cortex-a76"@' cbl-configuration.sh
+sed -i -e '/export HOST_QEMU_CPUCOUNT=/s@=.*@="4"@' cbl-configuration.sh
+sed -i -e '/export MAKEFLAGS=/s@=.*@="-j4"@' cbl-configuration.sh
+cat > add-notification-for-little-buddy <<EOF
+sed -i -e '/Host build complete/a echo go-ahead-little-buddy > ../hang-on-there-little-buddy' 00-qemu-to-qemu-build.sh
+EOF
+chmod 775 add-notification-for-little-buddy
+sed -i -e '/Start timestamp:/a ./add-notification-for-little-buddy' run
+popd
+
+pushd aarch64-*
+cat >> cbl-configuration.sh <<EOF
+export TARGET_SYSTEM_MAKEFLAGS="-j4"
+export TARGET_QEMU_CPUCOUNT=4
+export TARGET_QEMU_RAM_MB=30720
+export REMOTE_TARGET_BUILD_LOCATION="cbl@lbopi-wl:/media/nvme/cbl/workspace/target"
+export REMOTE_TARGET_QEMU_CHANGES="-e '/qemu-system/s@^@taskset -c 4-7 @' -e 's@-cpu cortex-a76@-accel kvm -cpu host@'"
+EOF
+sed -i -e '2i cat ../hang-on-there-little-buddy' run
+popd
+
+cat > run <<EOF
+echo "Starting build targeting AMD64"
+pushd amd64-*
+./run > ../AMD64-RUN-LOG 2>&1 &
+popd
+echo "Starting build targeting AArch64"
+pushd aarch64-*
+./run > ../AARCH64-RUN-LOG 2>&1 &
+popd
+for job in \`jobs -p\`
+do
+  echo "Waiting for \$job..."
+  wait \$job
+done
+EOF
+chmod 775 run

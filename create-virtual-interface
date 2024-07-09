@@ -1,0 +1,9 @@
+#!/bin/bash
+
+for TAPDEV in $@
+do
+    echo "creating interface tapvirt${TAPDEV}"
+    ip tuntap add dev tapvirt${TAPDEV} mode tap user $SUDO_USER
+    ip link set tapvirt${TAPDEV} up
+    ip link set tapvirt${TAPDEV} master bridgevirt
+done

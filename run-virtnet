@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Set up virtual bridge
+
+export PATH=$PATH:/sbin:/usr/sbin
+export PATH=/home/cbl/cbltools/sbin:/home/cbl/cbltools/bin:$PATH
+
+# trap /home/cbl/bin/shutdown-virtnet EXIT
+# trap /home/cbl/bin/shutdown-virtnet ERR
+
+modprobe tun
+ip link add bridgevirt type bridge
+ip link set dev bridgevirt address aa:bb:cc:dd:ee:ff
+ip link set bridgevirt up
+ip addr add 10.2.83.1/24 dev bridgevirt
+
+dnsmasq \
+    --no-daemon \
+    --log-facility=- \
+    --port=0 \
+    --listen-address=10.2.83.1 \
+    --bind-interfaces \
+    --dhcp-range="10.2.83.2,10.2.83.254" \
+    --dhcp-sequential-ip
+
+
+# Tear down virtual bridge
+bridge link show bridgevirt | awk '{print $2}' | tr -d ':' | while read IFACE
+do
+    ip tuntap del dev $IFACE mode tap
+done
+ip link del bridgevirt type bridge

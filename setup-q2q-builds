@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+# Setup qemu-to-qemu builds for amd64->aarch64 and aarch64->amd64
+# The host-side builds will use the base image `lbl-complete.qcow2`. If
+# modifications are needed to the base image, use the respective run
+# scripts for the build system (which will put changes into lbl.qcow2)
+# and then make a new host-system lbl.qcow2 based on that one rather
+# than lbl-complete.qcow2.
+
+export TODAY=$(date +%Y-%m-%d)
+mkdir -p $HOME/work/q2q
+cd $HOME/work/q2q
+mkdir aarch64-${TODAY} && pushd aarch64-${TODAY}
+ln -s $HOME/gits/cbl cbl
+ln -s $HOME/materials materials
+cat > cbl-configuration.sh <<'EOF'
+export DOMAIN_NAME="lblinux.org"
+export HOST_NAME="autoaarch64"
+export MAKEFLAGS="-j10"
+EOF
+chmod 775 cbl-configuration.sh
+cat > run <<'EOF'
+#!/bin/bash
+source cbl-configuration.sh
+export SCRIPT_DIR="$(pwd)"
+export DOCUMENT_DIR="$(pwd)"
+export LOGFILE_DIR="$(pwd)/log"
+export FMT='+%a %b %e %H:%M:%S %Z %Y (%s)'
+pushd cbl
+echo "Built from: $(git rev-parse HEAD)" > ${SCRIPT_DIR}/BUILD-INFO
+lb qemu-to-qemu-build
+popd
+echo "On $(hostname), using the qemu-to-qemu build process" >> BUILD-INFO
+echo "and cbl-configuration.sh:" >> BUILD-INFO
+echo "-----" >> BUILD-INFO
+cat cbl-configuration.sh >> BUILD-INFO
+echo "-----" >> BUILD-INFO
+echo "Start timestamp: $(date "$FMT")" >> BUILD-INFO
+time ./qemu-to-qemu-build.sh 2>&1 | tee log/AUTO-BUILD.LOG
+echo "Finish timestamp: $(date "$FMT")" >> BUILD-INFO
+mkdir -p package
+mv BUILD-INFO package
+pushd package
+sha256sum * > SHA256SUMS
+popd
+chmod a-w package/*
+EOF
+chmod 775 run
+mkdir host-system && pushd host-system
+export AMDDIR=$(ls -1d $HOME/builds/amd64-* | tail -n 1)
+export AMDKERNEL=$(ls -1 ${AMDDIR}/kernel-* | tail -n 1)
+cp -a $AMDKERNEL kernel
+pushd $AMDDIR
+if [ ! -f lbl-complete.qcow2 ]
+then
+    lrzip -d lbl-complete.qcow2.lrz
+fi
+popd
+cp -a ${AMDDIR}/lbl-complete.qcow2 lbl.qcow2
+popd
+popd
+
+mkdir amd64-${TODAY} && pushd amd64-${TODAY}
+ln -s $HOME/gits/cbl cbl
+ln -s $HOME/materials materials
+cat > cbl-configuration.sh <<'EOF'
+export HOST="aarch64-unknown-linux-gnu"
+export TARGET="x86_64-cbl-linux-gnu"
+export BOOT_DEVICE="/dev/sda"
+export BOOTLOADER="grub"
+export DOMAIN_NAME="lblinux.org"
+export HOST_NAME="autoamd64"
+export KERNEL_ARCH="x86"
+export KERNEL_CONFIG="x86_64_defconfig"
+export KERNEL_TARGET="bzImage"
+export MAKEFLAGS="-j8"
+export HOST_NET_DRIVER="virtio-net-device"
+export HOST_QEMU_ARCH="aarch64"
+export HOST_QEMU_CPU="cortex-a57"
+export HOST_QEMU_CPUCOUNT="8"
+export HOST_QEMU_DRIVE_PREFIX="vd"
+export HOST_QEMU_MACHINE="virt"
+export HOST_QEMU_RAM_MB="32768"
+export HOST_SERIAL_DEV="ttyAMA0"
+export TARGET_EXPECTED_MACHINE_NAME="Advanced Micro Devices X86-64"
+export TARGET_GCC_CONFIG=''
+export TARGET_NET_DRIVER="e1000"
+export TARGET_QEMU_ARCH="x86_64"
+export TARGET_QEMU_CPUCOUNT="10"
+export TARGET_QEMU_CPU="host"
+export TARGET_QEMU_DRIVE_PREFIX="sd"
+export TARGET_QEMU_MACHINE="pc-i440fx-2.8,accel=kvm,usb=off"
+export TARGET_QEMU_RAM_MB="32768"
+export TARGET_SERIAL_DEV="ttyS0"
+export TARGET_SWAP_DEVICE="/dev/sdb"
+export TARGET_SYSTEM_CFLAGS="-O2 -fomit-frame-pointer -mtune=native"
+export TARGET_SYSTEM_MAKEFLAGS="-j10"
+export TIMEZONE="America/Chicago"
+EOF
+chmod 775 cbl-configuration.sh
+cp ../aarch64-${TODAY}/run .
+mkdir host-system && pushd host-system
+export AARCHDIR=$(ls -1d $HOME/builds/aarch64-* | tail -n 1)
+export AARCHKERNEL=$(ls -1 ${AARCHDIR}/kernel-* | tail -n 1)
+cp -a $AARCHKERNEL kernel
+pushd $AARCHDIR
+if [ ! -f lbl-complete.qcow2 ]
+then
+    lrzip -d lbl-complete.qcow2.lrz
+fi
+popd
+cp -a ${AARCHDIR}/lbl-complete.qcow2 lbl.qcow2
+popd
+popd
